@@ -39,7 +39,7 @@ sudo rm -rf /usr/local/{bin/{node,npm},lib/node_modules/npm,lib/node,share/man/*
 
 - 内建模块直接从内存加载
 - 文件模块通过文件查找定位到文件
-- 包通过 package.json 里面的 mian 字段查找入口文件
+- 包通过 package.json 里面的 main 字段查找入口文件
 
 ### module.exports
 
@@ -1090,6 +1090,32 @@ http.createServer(function(req, res) {
     proxyRequest.end();
   });
 }).listen(8888); // 监听来自本地浏览器的连接
+```
+
+### 封装 request-promise
+
+```js
+const https = require('https');
+const promisify = require('util').promisify;
+
+https.get[promisify.custom] = function getAsync(options) {
+  return new Promise((resolve, reject) => {
+    https.get(options, (response) => {
+      response.end = new Promise((resolve) => response.on('end', resolve));
+      resolve(response);
+    }).on('error', reject);
+  });
+};
+const rp = promisify(https.get);
+
+(async () => {
+  const res = await rp('https://jsonmock.hackerrank.com/api/movies/search/?Title=Spiderman&page=1');
+  let body = '';
+  res.on('data', (chunk) => body += chunk);
+  await res.end;
+
+  console.log(body);
+})();
 ```
 
 ## DNS 请求
