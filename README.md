@@ -16,9 +16,13 @@
 
 ![01.png](https://qiniu.chenng.cn/2019-01-28-09-44-31.png)
 
-这个 markdown 文件已经丢到 Github：
+这个 markdown 文件已经丢到 Github，有更新会直接推这里：
 
 https://github.com/ringcrl/node-point
+
+博客上也会记录一些好玩的东西：
+
+www.chenng.cn/archives/
 
 # 安装
 
@@ -1553,7 +1557,89 @@ webSocketServer.on('connection', function (ws) {
 | serve-index     | 目录列表                                                         |
 | whost           | 允许路由匹配子域名                                               |
 
+## JWT
 
+JSON Web Token（缩写 JWT）是目前最流行的跨域认证解决方案。
+
+### 跨域认证
+
+#### 一般流程
+
+- 用户向服务器发送用户名和密码
+- 服务器验证通过后，在当前对话（session）里面保存相关数据，比如用户角色、登录时间等等
+- 服务器向用户返回一个 session_id，写入用户的 Cookie
+- 用户随后的每一次请求，都会通过 Cookie，将 session_id 传回服务器
+- 服务器收到 session_id，找到前期保存的数据，由此得知用户的身份
+
+#### session 共享
+
+在服务器集群，要求 session 数据共享，每台服务器都能够读取 session：
+
+- 一种解决方案是 session 数据持久化，写入数据库或别的持久层。各种服务收到请求后，都向持久层请求数据。这种方案的优点是架构清晰，缺点是工程量比较大。另外，持久层万一挂了，就会单点失败。
+- 另一种方案是服务器索性不保存 session 数据了，所有数据都保存在客户端，每次请求都发回服务器。JWT 就是这种方案的一个代表。
+
+### JWT
+
+#### 原理
+
+- 服务器认证以后，生成一个 JSON 对象，发回给用户
+- 用户与服务端通信的时候，都要发回这个 JSON 对象，服务器完全只靠这个对象认定用户身份
+- 防止篡改会加上签名
+
+#### 数据结构
+
+Header（头部）.Payload（负载）.Signature（签名）：
+
+- Header：JSON，使用 Base64 URL 转成字符串
+- Payload：JSON，使用 Base64 URL 转成字符串
+- Signature：对前两部分的签名
+
+##### Header
+
+```js
+{
+  "alg": "HS256", // 签名的算法
+  "typ": "JWT" // token 的类型
+}
+```
+
+##### Payload
+
+```js
+{
+  // 7 个官方字段
+  "iss": "签发人",
+  "exp": "过期时间",
+  "sub": "主题",
+  "aud": "受众",
+  "nbf": "生效时间",
+  "iat": "签发时间",
+  "jti": "编号",
+  // 定义私有字段
+  "name": "Chenng" 
+}
+```
+
+##### Signature
+
+```sh
+HMACSHA256(
+  base64UrlEncode(header) + "." +
+  base64UrlEncode(payload),
+  secret) # secret 秘钥只有服务器知道
+```
+
+
+#### 使用方式
+
+- 客户端收到服务器返回的 JWT，可以储存在 Cookie 里面，也可以储存在 localStorage
+- 放在 Cookie 里面自动发送，但是这样不能跨域，所以更好的做法是放在 HTTP 请求的头信息 Authorization 字段里面
+
+#### 特点
+
+- JWT 不仅可以用于认证，也可以用于交换信息。有效使用 JWT，可以降低服务器查询数据库的次数
+- JWT 的最大缺点是，由于服务器不保存 session 状态，因此无法在使用过程中废止某个 token，或者更改 token 的权限。也就是说，一旦 JWT 签发了，在到期之前就会始终有效，除非服务器部署额外的逻辑
+- JWT 本身包含了认证信息，一旦泄露，任何人都可以获得该令牌的所有权限。为了减少盗用，JWT 的有效期应该设置得比较短。对于一些比较重要的权限，使用时应该再次对用户进行认证
 
 # 项目管理
 
