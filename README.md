@@ -239,6 +239,28 @@ musicPlayer.on('error', function (err) {
 });
 ```
 
+# util
+
+## promisify
+
+```js
+const util = require('util');
+const fs = require('fs');
+const readAsync = util.promisify(fs.readFile);
+
+async function init() {
+  try {
+    let data = await readAsync('./package.json');
+
+    data  =JSON.parse(data);
+
+    console.log(data.name);
+  } catch (err) {
+    console.log(err);
+  }
+}
+```
+
 # 流
 
 ## 理解流
@@ -1164,6 +1186,23 @@ function aesDecrypt(encrypted, key = 'key') {
 }
 ```
 
+## 发起 HTTP 请求的方法
+
+- HTTP 标准库
+    - 无需安装外部依赖
+    - 需要以块为单位接受数据，自己监听 end 事件
+    - HTTP 和 HTTPS 是两个模块，需要区分使用
+- Request 库
+    - 使用方便
+    - 有 promise 版本 `request-promise`
+- Axios
+    - 既可以用在浏览器又可以用在 NodeJS
+    - 可以使用 axios.all 并发多个请求
+- SuperAgent
+    - 可以链式使用
+- node-fetch
+    - 浏览器的 fetch 移植过来的
+
 # 子进程
 
 ## 执行外部应用
@@ -1308,338 +1347,6 @@ setTimeout(function () { process.exit(0); }, 3000);
 - 通过 master-cluster 模式可以使得应用更加健壮
 - Cluster 底层是 child_process 模块，除了可以发送普通消息，还可以发送底层对象 `TCP`、`UDP` 等
 - TCP 主进程发送到子进程，子进程能根据消息重建出 TCP 连接，Cluster 可以决定 fork 出合适的硬件资源的子进程数
-
-# 综合应用
-
-## watch 服务
-
-```js
-const fs = require('fs');
-const exec = require('child_process').exec;
-
-function watch() {
-  const child = exec('node server.js');
-  const watcher = fs.watch(__dirname + '/server.js', function () {
-    console.log('File changed, reloading.');
-    child.kill();
-    watcher.close();
-    watch();
-  });
-}
-
-watch();
-```
-
-## RESTful web 应用
-
-- REST 意思是表征性状态传输
-- 使用正确的 HTTP 方法、URLs 和头部信息来创建语义化 RESTful API
-
-- GET /gages：获取
-- POST /pages：创建
-- GET /pages/10：获取 pages10
-- PATCH /pages/10：更新 pages10
-- PUT /pages/10：替换 pages10
-- DELETE /pages/10：删除 pages10
-
-```js
-let app;
-const express = require('express');
-const routes = require('./routes');
-
-module.exports = app = express();
-
-app.use(express.json()); // 使用 JSON body 解析
-app.use(express.methodOverride()); // 允许一个查询参数来制定额外的 HTTP 方法
-
-// 资源使用的路由
-app.get('/pages', routes.pages.index);
-app.get('/pages/:id', routes.pages.show);
-app.post('/pages', routes.pages.create);
-app.patch('/pages/:id', routes.pages.patch);
-app.put('/pages/:id', routes.pages.update);
-app.del('/pages/:id', routes.pages.remove);
-```
-
-## 中间件应用
-
-```js
-const express = require('express');
-const app = express();
-const Schema = require('validate');
-const xml2json = require('xml2json');
-const util = require('util');
-const Page = new Schema();
-
-Page.path('title').type('string').required(); // 数据校验确保页面有标题
-
-function ValidatorError(errors) { // 从错误对象继承，校验出现的错误在错误中间件处理
-  this.statusCode = 400;
-  this.message = errors.join(', ');
-}
-util.inherits(ValidatorError, Error);
-
-function xmlMiddleware(req, res, next) { // 处理 xml 的中间件
-  if (!req.is('xml')) return next();
-
-  let body = '';
-  req.on('data', function (str) { // 从客户端读到数据时触发
-    body += str;
-  });
-
-  req.on('end', function () {
-    req.body = xml2json.toJson(body.toString(), {
-      object: true,
-      sanitize: false,
-    });
-    next();
-  });
-}
-
-function checkValidXml(req, res, next) { // 数据校验中间件
-  const page = Page.validate(req.body.page);
-  if (page.errors.length) {
-    next(new ValidatorError(page.errors)); // 传递错误给 next 阻止路由继续运行
-  } else {
-    next();
-  }
-}
-
-function errorHandler(err, req, res, next) { // 错误处理中间件
-  console.error('errorHandler', err);
-  res.send(err.statusCode || 500, err.message);
-}
-
-app.use(xmlMiddleware); // 应用 XML 中间件到所有的请求中
-
-app.post('/pages', checkValidXml, function (req, res) { // 特定的请求校验 xml
-  console.log('Valid page:', req.body.page);
-  res.send(req.body);
-});
-
-app.use(errorHandler); // 添加错误处理中间件
-
-app.listen(3000);
-```
-
-## 通过事件组织应用
-
-```js
-// 监听用户注册成功消息，绑定邮件程序
-const express = require('express');
-const app = express();
-const emails = require('./emails');
-const routes = require('./routes');
-
-app.use(express.json());
-
-app.post('/users', routes.users.create); // 设置路由创建用户
-
-app.on('user:created', emails.welcome); // 监听创建成功事件，绑定 email 代码
-
-module.exports = app;
-```
-
-```js
-// 用户注册成功发起事件
-const User = require('./../models/user');
-
-module.exports.create = function (req, res, next) {
-  const user = new User(req.body);
-  user.save(function (err) {
-    if (err) return next(err);
-    res.app.emit('user:created', user); // 当用户成功注册时触发创建用户事件
-    res.send('User created');
-  });
-};
-```
-
-## WebSocket 与 session
-
-```js
-const express = require('express');
-const WebSocketServer = require('ws').Server;
-const parseCookie = express.cookieParser('some secret'); // 加载解析 cookie 中间件，设置密码
-const MemoryStore = express.session.MemoryStore; // 加载要使用的会话存储
-const store = new MemoryStore();
-
-const app = express();
-const server = app.listen(process.env.PORT || 3000);
-
-app.use(parseCookie);
-app.use(express.session({ store: store, secret: 'some secret' })); // 告知 Express 使用会话存储和设置密码(使用 session 中间件)
-app.use(express.static(__dirname + '/public'));
-
-app.get('/random', function (req, res) { // 测试测试用的会话值
-  req.session.random = Math.random().toString();
-  res.send(200);
-});
-
-// 设置 WebSocket 服务器，将其传递给 Express 服务器
-// 需要传递已有的 Express 服务（listen 的返回对象）
-const webSocketServer = new WebSocketServer({ server: server });
-
-// 在连接事件给客户端创建 WebSocket
-webSocketServer.on('connection', function (ws) {
-  let session;
-
-  ws.on('message', function (data, flags) {
-    const message = JSON.parse(data);
-
-    // 客户端发送的 JSON，需要一些代码来解析 JSON 字符串确定是否可用
-    if (message.type === 'getSession') {
-      parseCookie(ws.upgradeReq, null, function (err) {
-        // 从 HTTP 的更新请求中获取 WebSocket 的会话 ID
-        // 一旦 WebSockets 服务器有一个连接，session ID 可以用=从初始化请求中的 cookies 中获取
-        const sid = ws.upgradeReq.signedCookies['connect.sid'];
-
-        // 从存储中获取用户的会话信息
-        // 只需要在初始化的请求中传递一个引用给解析 cookie 的中间件
-        // 然后 session 可以使用 session 存储的 get 方法加载
-        store.get(sid, function (err, loadedSession) {
-          if (err) console.error(err);
-          session = loadedSession;
-          ws.send('session.random: ' + session.random, {
-            mask: false,
-          }); // session 加载后会把一个包含了 session 值的消息发回给客户端
-        });
-      });
-    } else {
-      ws.send('Unknown command');
-    }
-  });
-});
-```
-
-```html
-<!DOCTYPE html>
-<html>
-
-<head>
-  <script>
-    const host = window.document.location.host.replace(/:.*/, '');
-    const ws = new WebSocket('ws://' + host + ':3000');
-
-    setInterval(function () {
-      ws.send('{ "type": "getSession" }'); // 定期向服务器发送消息
-    }, 1000);
-
-    ws.onmessage = function (event) {
-      document.getElementById('message').innerHTML = event.data;
-    };
-  </script>
-</head>
-
-<body>
-  <h1>WebSocket sessions</h1>
-  <div id='message'></div><br>
-</body>
-
-</html>
-```
-
-## Express4 中间件
-
-| package         | 描述                                                             |
-| --------------- | ---------------------------------------------------------------- |
-| body-parser     | 解析 URL 编码 和 JSON POST 请求的 body 数据                      |
-| compression     | 压缩服务器响应                                                   |
-| connect-timeout | 请求允许超时                                                     |
-| cookie-parser   | 从 HTTP 头部信息中解析 cookies，结果放在 req.cookies             |
-| cookie-session  | 使用 cookies 来支持简单会话                                      |
-| csurf           | 在会话中添加 token，防御 CSRF 攻击                               |
-| errorhandler    | Connect 中使用的默认错误处理                                     |
-| express-session | 简单的会话处理，使用 stores 扩展来吧会话信息写入到数据库或文件中 |
-| method-override | 映射新的 HTTP 动词到请求变量中的 _method                         |
-| morgan          | 日志格式化                                                       |
-| response-time   | 跟踪响应时间                                                     |
-| serve-favicon   | 发送网站图标                                                     |
-| serve-index     | 目录列表                                                         |
-| whost           | 允许路由匹配子域名                                               |
-
-## JWT
-
-JSON Web Token（缩写 JWT）是目前最流行的跨域认证解决方案。
-
-### 跨域认证
-
-#### 一般流程
-
-- 用户向服务器发送用户名和密码
-- 服务器验证通过后，在当前对话（session）里面保存相关数据，比如用户角色、登录时间等等
-- 服务器向用户返回一个 session_id，写入用户的 Cookie
-- 用户随后的每一次请求，都会通过 Cookie，将 session_id 传回服务器
-- 服务器收到 session_id，找到前期保存的数据，由此得知用户的身份
-
-#### session 共享
-
-在服务器集群，要求 session 数据共享，每台服务器都能够读取 session：
-
-- 一种解决方案是 session 数据持久化，写入数据库或别的持久层。各种服务收到请求后，都向持久层请求数据。这种方案的优点是架构清晰，缺点是工程量比较大。另外，持久层万一挂了，就会单点失败。
-- 另一种方案是服务器索性不保存 session 数据了，所有数据都保存在客户端，每次请求都发回服务器。JWT 就是这种方案的一个代表。
-
-### JWT
-
-#### 原理
-
-- 服务器认证以后，生成一个 JSON 对象，发回给用户
-- 用户与服务端通信的时候，都要发回这个 JSON 对象，服务器完全只靠这个对象认定用户身份
-- 防止篡改会加上签名
-
-#### 数据结构
-
-Header（头部）.Payload（负载）.Signature（签名）：
-
-- Header：JSON，使用 Base64 URL 转成字符串
-- Payload：JSON，使用 Base64 URL 转成字符串
-- Signature：对前两部分的签名
-
-##### Header
-
-```js
-{
-  "alg": "HS256", // 签名的算法
-  "typ": "JWT" // token 的类型
-}
-```
-
-##### Payload
-
-```js
-{
-  // 7 个官方字段
-  "iss": "签发人",
-  "exp": "过期时间",
-  "sub": "主题",
-  "aud": "受众",
-  "nbf": "生效时间",
-  "iat": "签发时间",
-  "jti": "编号",
-  // 定义私有字段
-  "name": "Chenng" 
-}
-```
-
-##### Signature
-
-```sh
-HMACSHA256(
-  base64UrlEncode(header) + "." +
-  base64UrlEncode(payload),
-  secret) # secret 秘钥只有服务器知道
-```
-
-
-#### 使用方式
-
-- 客户端收到服务器返回的 JWT，可以储存在 Cookie 里面，也可以储存在 localStorage
-- 放在 Cookie 里面自动发送，但是这样不能跨域，所以更好的做法是放在 HTTP 请求的头信息 Authorization 字段里面
-
-#### 特点
-
-- JWT 不仅可以用于认证，也可以用于交换信息。有效使用 JWT，可以降低服务器查询数据库的次数
-- JWT 的最大缺点是，由于服务器不保存 session 状态，因此无法在使用过程中废止某个 token，或者更改 token 的权限。也就是说，一旦 JWT 签发了，在到期之前就会始终有效，除非服务器部署额外的逻辑
-- JWT 本身包含了认证信息，一旦泄露，任何人都可以获得该令牌的所有权限。为了减少盗用，JWT 的有效期应该设置得比较短。对于一些比较重要的权限，使用时应该再次对用户进行认证
 
 # 项目管理
 
@@ -2230,4 +1937,403 @@ app.post('/process', parseForm, csrfProtection, function(req, res) {
   Favorite color: <input type="text" name="favoriteColor">
   <button type="submit">Submit</button>
 </form>  
+```
+
+# 综合应用
+
+## watch 服务
+
+```js
+const fs = require('fs');
+const exec = require('child_process').exec;
+
+function watch() {
+  const child = exec('node server.js');
+  const watcher = fs.watch(__dirname + '/server.js', function () {
+    console.log('File changed, reloading.');
+    child.kill();
+    watcher.close();
+    watch();
+  });
+}
+
+watch();
+```
+
+## RESTful web 应用
+
+- REST 意思是表征性状态传输
+- 使用正确的 HTTP 方法、URLs 和头部信息来创建语义化 RESTful API
+
+- GET /gages：获取
+- POST /pages：创建
+- GET /pages/10：获取 pages10
+- PATCH /pages/10：更新 pages10
+- PUT /pages/10：替换 pages10
+- DELETE /pages/10：删除 pages10
+
+```js
+let app;
+const express = require('express');
+const routes = require('./routes');
+
+module.exports = app = express();
+
+app.use(express.json()); // 使用 JSON body 解析
+app.use(express.methodOverride()); // 允许一个查询参数来制定额外的 HTTP 方法
+
+// 资源使用的路由
+app.get('/pages', routes.pages.index);
+app.get('/pages/:id', routes.pages.show);
+app.post('/pages', routes.pages.create);
+app.patch('/pages/:id', routes.pages.patch);
+app.put('/pages/:id', routes.pages.update);
+app.del('/pages/:id', routes.pages.remove);
+```
+
+## 中间件应用
+
+```js
+const express = require('express');
+const app = express();
+const Schema = require('validate');
+const xml2json = require('xml2json');
+const util = require('util');
+const Page = new Schema();
+
+Page.path('title').type('string').required(); // 数据校验确保页面有标题
+
+function ValidatorError(errors) { // 从错误对象继承，校验出现的错误在错误中间件处理
+  this.statusCode = 400;
+  this.message = errors.join(', ');
+}
+util.inherits(ValidatorError, Error);
+
+function xmlMiddleware(req, res, next) { // 处理 xml 的中间件
+  if (!req.is('xml')) return next();
+
+  let body = '';
+  req.on('data', function (str) { // 从客户端读到数据时触发
+    body += str;
+  });
+
+  req.on('end', function () {
+    req.body = xml2json.toJson(body.toString(), {
+      object: true,
+      sanitize: false,
+    });
+    next();
+  });
+}
+
+function checkValidXml(req, res, next) { // 数据校验中间件
+  const page = Page.validate(req.body.page);
+  if (page.errors.length) {
+    next(new ValidatorError(page.errors)); // 传递错误给 next 阻止路由继续运行
+  } else {
+    next();
+  }
+}
+
+function errorHandler(err, req, res, next) { // 错误处理中间件
+  console.error('errorHandler', err);
+  res.send(err.statusCode || 500, err.message);
+}
+
+app.use(xmlMiddleware); // 应用 XML 中间件到所有的请求中
+
+app.post('/pages', checkValidXml, function (req, res) { // 特定的请求校验 xml
+  console.log('Valid page:', req.body.page);
+  res.send(req.body);
+});
+
+app.use(errorHandler); // 添加错误处理中间件
+
+app.listen(3000);
+```
+
+## 通过事件组织应用
+
+```js
+// 监听用户注册成功消息，绑定邮件程序
+const express = require('express');
+const app = express();
+const emails = require('./emails');
+const routes = require('./routes');
+
+app.use(express.json());
+
+app.post('/users', routes.users.create); // 设置路由创建用户
+
+app.on('user:created', emails.welcome); // 监听创建成功事件，绑定 email 代码
+
+module.exports = app;
+```
+
+```js
+// 用户注册成功发起事件
+const User = require('./../models/user');
+
+module.exports.create = function (req, res, next) {
+  const user = new User(req.body);
+  user.save(function (err) {
+    if (err) return next(err);
+    res.app.emit('user:created', user); // 当用户成功注册时触发创建用户事件
+    res.send('User created');
+  });
+};
+```
+
+## WebSocket 与 session
+
+```js
+const express = require('express');
+const WebSocketServer = require('ws').Server;
+const parseCookie = express.cookieParser('some secret'); // 加载解析 cookie 中间件，设置密码
+const MemoryStore = express.session.MemoryStore; // 加载要使用的会话存储
+const store = new MemoryStore();
+
+const app = express();
+const server = app.listen(process.env.PORT || 3000);
+
+app.use(parseCookie);
+app.use(express.session({ store: store, secret: 'some secret' })); // 告知 Express 使用会话存储和设置密码(使用 session 中间件)
+app.use(express.static(__dirname + '/public'));
+
+app.get('/random', function (req, res) { // 测试测试用的会话值
+  req.session.random = Math.random().toString();
+  res.send(200);
+});
+
+// 设置 WebSocket 服务器，将其传递给 Express 服务器
+// 需要传递已有的 Express 服务（listen 的返回对象）
+const webSocketServer = new WebSocketServer({ server: server });
+
+// 在连接事件给客户端创建 WebSocket
+webSocketServer.on('connection', function (ws) {
+  let session;
+
+  ws.on('message', function (data, flags) {
+    const message = JSON.parse(data);
+
+    // 客户端发送的 JSON，需要一些代码来解析 JSON 字符串确定是否可用
+    if (message.type === 'getSession') {
+      parseCookie(ws.upgradeReq, null, function (err) {
+        // 从 HTTP 的更新请求中获取 WebSocket 的会话 ID
+        // 一旦 WebSockets 服务器有一个连接，session ID 可以用=从初始化请求中的 cookies 中获取
+        const sid = ws.upgradeReq.signedCookies['connect.sid'];
+
+        // 从存储中获取用户的会话信息
+        // 只需要在初始化的请求中传递一个引用给解析 cookie 的中间件
+        // 然后 session 可以使用 session 存储的 get 方法加载
+        store.get(sid, function (err, loadedSession) {
+          if (err) console.error(err);
+          session = loadedSession;
+          ws.send('session.random: ' + session.random, {
+            mask: false,
+          }); // session 加载后会把一个包含了 session 值的消息发回给客户端
+        });
+      });
+    } else {
+      ws.send('Unknown command');
+    }
+  });
+});
+```
+
+```html
+<!DOCTYPE html>
+<html>
+
+<head>
+  <script>
+    const host = window.document.location.host.replace(/:.*/, '');
+    const ws = new WebSocket('ws://' + host + ':3000');
+
+    setInterval(function () {
+      ws.send('{ "type": "getSession" }'); // 定期向服务器发送消息
+    }, 1000);
+
+    ws.onmessage = function (event) {
+      document.getElementById('message').innerHTML = event.data;
+    };
+  </script>
+</head>
+
+<body>
+  <h1>WebSocket sessions</h1>
+  <div id='message'></div><br>
+</body>
+
+</html>
+```
+
+## Express4 中间件
+
+| package         | 描述                                                             |
+| --------------- | ---------------------------------------------------------------- |
+| body-parser     | 解析 URL 编码 和 JSON POST 请求的 body 数据                      |
+| compression     | 压缩服务器响应                                                   |
+| connect-timeout | 请求允许超时                                                     |
+| cookie-parser   | 从 HTTP 头部信息中解析 cookies，结果放在 req.cookies             |
+| cookie-session  | 使用 cookies 来支持简单会话                                      |
+| csurf           | 在会话中添加 token，防御 CSRF 攻击                               |
+| errorhandler    | Connect 中使用的默认错误处理                                     |
+| express-session | 简单的会话处理，使用 stores 扩展来吧会话信息写入到数据库或文件中 |
+| method-override | 映射新的 HTTP 动词到请求变量中的 _method                         |
+| morgan          | 日志格式化                                                       |
+| response-time   | 跟踪响应时间                                                     |
+| serve-favicon   | 发送网站图标                                                     |
+| serve-index     | 目录列表                                                         |
+| whost           | 允许路由匹配子域名                                               |
+
+## JWT
+
+JSON Web Token（缩写 JWT）是目前最流行的跨域认证解决方案。
+
+### 跨域认证
+
+#### 一般流程
+
+- 用户向服务器发送用户名和密码
+- 服务器验证通过后，在当前对话（session）里面保存相关数据，比如用户角色、登录时间等等
+- 服务器向用户返回一个 session_id，写入用户的 Cookie
+- 用户随后的每一次请求，都会通过 Cookie，将 session_id 传回服务器
+- 服务器收到 session_id，找到前期保存的数据，由此得知用户的身份
+
+#### session 共享
+
+在服务器集群，要求 session 数据共享，每台服务器都能够读取 session：
+
+- 一种解决方案是 session 数据持久化，写入数据库或别的持久层。各种服务收到请求后，都向持久层请求数据。这种方案的优点是架构清晰，缺点是工程量比较大。另外，持久层万一挂了，就会单点失败。
+- 另一种方案是服务器索性不保存 session 数据了，所有数据都保存在客户端，每次请求都发回服务器。JWT 就是这种方案的一个代表。
+
+### JWT
+
+#### 原理
+
+- 服务器认证以后，生成一个 JSON 对象，发回给用户
+- 用户与服务端通信的时候，都要发回这个 JSON 对象，服务器完全只靠这个对象认定用户身份
+- 防止篡改会加上签名
+
+#### 数据结构
+
+Header（头部）.Payload（负载）.Signature（签名）：
+
+- Header：JSON，使用 Base64 URL 转成字符串
+- Payload：JSON，使用 Base64 URL 转成字符串
+- Signature：对前两部分的签名
+
+##### Header
+
+```js
+{
+  "alg": "HS256", // 签名的算法
+  "typ": "JWT" // token 的类型
+}
+```
+
+##### Payload
+
+```js
+{
+  // 7 个官方字段
+  "iss": "签发人",
+  "exp": "过期时间",
+  "sub": "主题",
+  "aud": "受众",
+  "nbf": "生效时间",
+  "iat": "签发时间",
+  "jti": "编号",
+  // 定义私有字段
+  "name": "Chenng" 
+}
+```
+
+##### Signature
+
+```sh
+HMACSHA256(
+  base64UrlEncode(header) + "." +
+  base64UrlEncode(payload),
+  secret) # secret 秘钥只有服务器知道
+```
+
+
+#### 使用方式
+
+- 客户端收到服务器返回的 JWT，可以储存在 Cookie 里面，也可以储存在 localStorage
+- 放在 Cookie 里面自动发送，但是这样不能跨域，所以更好的做法是放在 HTTP 请求的头信息 Authorization 字段里面
+
+#### 特点
+
+- JWT 不仅可以用于认证，也可以用于交换信息。有效使用 JWT，可以降低服务器查询数据库的次数
+- JWT 的最大缺点是，由于服务器不保存 session 状态，因此无法在使用过程中废止某个 token，或者更改 token 的权限。也就是说，一旦 JWT 签发了，在到期之前就会始终有效，除非服务器部署额外的逻辑
+- JWT 本身包含了认证信息，一旦泄露，任何人都可以获得该令牌的所有权限。为了减少盗用，JWT 的有效期应该设置得比较短。对于一些比较重要的权限，使用时应该再次对用户进行认证
+
+## koa
+
+### 核心对象
+
+- HTTP 接收 解析 响应
+- 中间件 执行上下文
+- Koa 中一切的流程都是中间件
+
+### 源码组成
+
+- application
+- context
+- request
+- response
+
+### 中间件的使用
+
+```js
+const Koa = require('koa');
+
+const app = new Koa();
+
+const mid1 = async (ctx, next) => {
+  ctx.body = 'Hi';
+  await next(); // next 执行下一个中间件
+  ctx.body += ' there';
+};
+const mid2 = async (ctx, next) => {
+  ctx.type = 'text/html; chartset=utf-8';
+  await next();
+};
+const mid3 = async (ctx, next) => {
+  ctx.body += ' chenng';
+  await next();
+};
+
+app.use(mid1);
+app.use(mid2);
+app.use(mid3);
+
+app.listen(2333);
+// Hi chenng there
+```
+
+### 返回媒体资源
+
+```js
+router
+  .get('/api/dynamic_image/codewars', async (ctx, next) => {
+    const res = await axios.get('https://www.codewars.com/users/ringcrl');
+    const [, kyu, score] = res.data
+      .match(/<div class="stat"><b>Rank:<\/b>(.+?)<\/div><div class="stat"><b>Honor:<\/b>(.+?)<\/div>/);
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="80" height="20">
+        <rect x="0" y="0" width="80" height="20" fill="#fff" stroke-width="2" stroke="#cccccc"></rect>
+        <rect x="0" y="0" width="50" height="20" fill="#5b5b5b"></rect>
+        <text x="5" y="15" class="small" fill="#fff" style="font-size: 14px;">${kyu}</text>
+        <rect x="50" y="0" width="30" height="20" fill="#3275b0"></rect>
+        <text x="53" y="15" class="small" fill="#fff" style="font-size: 14px">${score}</text>
+      </svg>
+    `;
+    ctx.set('Content-Type', 'image/svg+xml');
+    ctx.body = Buffer.from(svg);
+    await next();
+  });
 ```
