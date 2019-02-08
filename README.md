@@ -12,7 +12,7 @@
 
 # 说明
 
-比较好的 markdown 的查看方式是直接用 VSCode 打开大纲，这样整个脉络一目了然，后续补充知识点也很快定位到响应的位置：
+比较好的 markdown 的查看方式是直接用 VSCode 打开大纲，这样整个脉络一目了然，后续补充知识点也很快定位到相应的位置：
 
 ![01.png](https://qiniu.chenng.cn/2019-01-28-09-44-31.png)
 
@@ -2336,4 +2336,60 @@ router
     ctx.body = Buffer.from(svg);
     await next();
   });
+```
+
+## Web API 设计
+
+### 需求
+
+- 易于使用
+- 便于修改
+- 健壮性好
+- 不怕公之于众
+
+### 重要准则
+
+- 设计容易记忆、功能一目了然
+- 使用合适的 HTTP 方法
+- 选择合适的英语单词，注意单词的单复数形式
+- 使用 OAuth 2.0 进行认证
+
+API 通用资源网站 ProgrammableWeb（<http://www.programmableweb.com>）中有各种已经公开的 Web API 文档，多观察一下
+
+## 公钥加密私钥解密
+
+### 生成公钥私钥
+
+```
+利用 openssl 生成公钥私钥 
+生成公钥：openssl genrsa -out rsa_private_key.pem 1024 
+生成私钥：openssl rsa -in rsa_private_key.pem -pubout -out rsa_public_key.pem
+```
+
+### crypto 使用
+
+```js
+const crypto = require('crypto');
+const fs = require('fs');
+
+const publicKey = fs.readFileSync(`${__dirname}/rsa_public_key.pem`).toString('ascii');
+const privateKey = fs.readFileSync(`${__dirname}/rsa_private_key.pem`).toString('ascii');
+console.log(publicKey);
+console.log(privateKey);
+const data = 'Chenng';
+console.log('content: ', data);
+
+//公钥加密
+const encodeData = crypto.publicEncrypt(
+  publicKey,
+  Buffer.from(data),
+).toString('base64');
+console.log('encode: ', encodeData);
+
+//私钥解密
+const decodeData = crypto.privateDecrypt(
+  privateKey,
+  Buffer.from(encodeData, 'base64'),
+);
+console.log('decode: ', decodeData.toString());
 ```
