@@ -1348,6 +1348,143 @@ setTimeout(function () { process.exit(0); }, 3000);
 - Cluster 底层是 child_process 模块，除了可以发送普通消息，还可以发送底层对象 `TCP`、`UDP` 等
 - TCP 主进程发送到子进程，子进程能根据消息重建出 TCP 连接，Cluster 可以决定 fork 出合适的硬件资源的子进程数
 
+# Node 多线程
+
+## 单线程问题
+
+- 对 cpu 利用不足
+- 某个未捕获的异常可能会导致整个程序的退出
+
+## Node 线程
+
+- Node 进程占用了 7 个线程
+- Node 中最核心的是 v8 引擎，在 Node 启动后，会创建 v8 的实例，这个实例是多线程的
+    - 主线程：编译、执行代码
+    - 编译/优化线程：在主线程执行的时候，可以优化代码
+    - 分析器线程：记录分析代码运行时间，为 Crankshaft 优化代码执行提供依据
+    - 垃圾回收的几个线程
+- JavaScript 的执行是单线程的，但 Javascript 的宿主环境，无论是 Node 还是浏览器都是多线程的
+
+## 异步 IO
+
+- Node 中有一些 IO 操作（DNS，FS）和一些 CPU 密集计算（Zlib，Crypto）会启用 Node 的线程池
+- 线程池默认大小为 4，可以手动更改线程池默认大小
+
+```js
+process.env.UV_THREADPOOL_SIZE = 64
+```
+
+## cluster 多进程
+
+```js
+const cluster = require('cluster');
+const http = require('http');
+const numCPUs = require('os').cpus().length;
+
+if (cluster.isMaster) {
+  console.log(`主进程 ${process.pid} 正在运行`);
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+
+  cluster.on('exit', (worker, code, signal) => {
+    console.log(`工作进程 ${worker.process.pid} 已退出`);
+  });
+} else {
+  // 工作进程可以共享任何 TCP 连接。
+  // 在本例子中，共享的是 HTTP 服务器。
+  http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Hello World');
+  }).listen(8000);
+  console.log(`工作进程 ${process.pid} 已启动`);
+}
+```
+
+- 一共有 9 个进程，其中一个主进程，cpu 个数 x cpu 核数 = 2 x 4 = 8 个 子进程
+- 无论 child_process 还是 cluster，都不是多线程模型，而是多进程模型
+- 应对单线程问题，通常使用多进程的方式来模拟多线程
+
+## 真 Node 多线程
+
+- Node 10.5.0 的发布，给出了一个实验性质的模块 worker_threads 给 Node 提供真正的多线程能力
+- worker_thread 模块中有 4 个对象和 2 个类
+    - isMainThread: 是否是主线程，源码中是通过 threadId === 0 进行判断的。
+    - MessagePort: 用于线程之间的通信，继承自 EventEmitter。
+    - MessageChannel: 用于创建异步、双向通信的通道实例。
+    - threadId: 线程 ID。
+    - Worker: 用于在主线程中创建子线程。第一个参数为 filename，表示子线程执行的入口。
+    - parentPort: 在 worker 线程里是表示父进程的 MessagePort 类型的对象，在主线程里为 null
+    - workerData: 用于在主进程中向子进程传递数据（data 副本）
+
+```js
+const {
+  isMainThread,
+  parentPort,
+  workerData,
+  threadId,
+  MessageChannel,
+  MessagePort,
+  Worker
+} = require('worker_threads');
+
+function mainThread() {
+  for (let i = 0; i < 5; i++) {
+    const worker = new Worker(__filename, { workerData: i });
+    worker.on('exit', code => { console.log(`main: worker stopped with exit code ${code}`); });
+    worker.on('message', msg => {
+      console.log(`main: receive ${msg}`);
+      worker.postMessage(msg + 1);
+    });
+  }
+}
+
+function workerThread() {
+  console.log(`worker: workerDate ${workerData}`);
+  parentPort.on('message', msg => {
+    console.log(`worker: receive ${msg}`);
+  }),
+  parentPort.postMessage(workerData);
+}
+
+if (isMainThread) {
+  mainThread();
+} else {
+  workerThread();
+}
+```
+
+### 线程通信
+
+```js
+const assert = require('assert');
+const {
+  Worker,
+  MessageChannel,
+  MessagePort,
+  isMainThread,
+  parentPort
+} = require('worker_threads');
+if (isMainThread) {
+  const worker = new Worker(__filename);
+  const subChannel = new MessageChannel();
+  worker.postMessage({ hereIsYourPort: subChannel.port1 }, [subChannel.port1]);
+  subChannel.port2.on('message', (value) => {
+    console.log('received:', value);
+  });
+} else {
+  parentPort.once('message', (value) => {
+    assert(value.hereIsYourPort instanceof MessagePort);
+    value.hereIsYourPort.postMessage('the worker is sending this');
+    value.hereIsYourPort.close();
+  });
+}
+```
+
+## 多进程 vs 多线程
+
+进程是资源分配的最小单位，线程是CPU调度的最小单位
+
 # 项目管理
 
 ## 组件式构建
@@ -2393,3 +2530,43 @@ const decodeData = crypto.privateDecrypt(
 );
 console.log('decode: ', decodeData.toString());
 ```
+
+## redis 缓存接口
+
+- 部分不用实时更新的数据使用 redis 进行缓存
+- 使用 node-schedule 在每晚定时调用接口
+
+
+### redis 使用
+
+```js
+const redis = require('redis');
+const redisClient = redis.createClient();
+const getAsync = promisify(redisClient.get).bind(redisClient);
+
+let codewarsRes = JSON.parse(await getAsync('codewarsRes'));
+if (!codewarsRes) {
+  const res = await axios.get('https://www.codewars.com/users/ringcrl');
+  codewarsRes = res.data;
+  redisClient.set('codewarsRes', JSON.stringify(codewarsRes), 'EX', 86000);
+}
+```
+
+### node-schedule 使用
+
+```js
+const schedule = require('node-schedule');
+const axios = require('axios');
+
+schedule.scheduleJob('* 23 59 * *', function () {
+  axios.get('https://static.chenng.cn/api/dynamic_image/leetcode_problems');
+  axios.get('https://static.chenng.cn/api/dynamic_image/leetcode');
+  axios.get('https://static.chenng.cn/api/dynamic_image/codewars');
+});
+```
+
+# 参考地址
+
+- [《Node.js硬实战：115个核心技巧》](https://www.amazon.cn/dp/B01MYX8XG1)
+- [i0natan/nodebestpractices](https://github.com/i0natan/nodebestpractices)
+- [真-Node多线程](https://juejin.im/post/5c63b5676fb9a049ac79a798?utm_source=gold_browser_extension)
