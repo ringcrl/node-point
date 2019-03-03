@@ -10,6 +10,14 @@
 
 <!--more-->
 
+# docsify 文档
+
+<https://static.chenng.cn/#/%E5%9F%BA%E7%A1%80-%E5%90%8E%E7%AB%AF/NodeJS>
+
+# 更新记录
+
+[CHANGE LOG](https://github.com/ringcrl/node-point/commits/master)
+
 # 说明
 
 比较好的 markdown 的查看方式是直接用 VSCode 打开大纲，这样整个脉络一目了然，后续补充知识点也很快定位到相应的位置：
@@ -106,6 +114,9 @@ console.log('__dirname:', __dirname); // 文件夹
 console.log('__filename:', __filename); // 文件
 
 path.join(__dirname, 'views', 'view.html'); // 如果不希望自己手动处理 / 的问题，使用 path.join
+
+// HOME 目录
+const homeDir =  require('os').homedir();
 ```
 
 ## console
@@ -1485,6 +1496,36 @@ if (isMainThread) {
 
 进程是资源分配的最小单位，线程是CPU调度的最小单位
 
+# 分布式
+
+## 分布式锁
+
+- 在单机场景下，可以使用语言的内置锁来实现进程同步
+- 在分布式场景下，需要同步的进程可能位于不同的节点上，那么就需要使用分布式锁
+
+### 数据库的唯一索引
+
+获得锁时向表中插入一条记录，释放锁时删除这条记录。
+
+- 锁没有失效时间，解锁失败的话其它进程无法再获得该锁。
+- 只能是非阻塞锁，插入失败直接就报错了，无法重试。
+- 不可重入，已经获得锁的进程也必须重新获取锁。
+
+### Redis 的 SETNX 指令
+
+使用 SETNX（set if not exist）指令插入一个键值对，如果 Key 已经存在，那么会返回 False，否则插入成功并返回 True
+
+- SETNX 指令和数据库的唯一索引类似，保证了只存在一个 Key 的键值对，可以用一个 Key 的键值对是否存在来判断是否存于锁定状态
+- EXPIRE 指令可以为一个键值对设置一个过期时间，从而避免了数据库唯一索引实现方式中释放锁失败的问题
+
+### Redis 的 RedLock 算法
+
+使用了多个 Redis 实例来实现分布式锁，这是为了保证在发生单点故障时仍然可用
+
+- 尝试从 N 个相互独立 Redis 实例获取锁
+- 计算获取锁消耗的时间，只有当这个时间小于锁的过期时间，并且从大多数（N / 2 + 1）实例上获取了锁，那么就认为锁获取成功了
+- 如果锁获取失败，就到每个实例上释放锁
+
 # 项目管理
 
 ## 组件式构建
@@ -2552,7 +2593,7 @@ if (!codewarsRes) {
 }
 ```
 
-### node-schedule 使用
+## node-schedule 使用
 
 ```js
 const schedule = require('node-schedule');
@@ -2565,8 +2606,30 @@ schedule.scheduleJob('* 23 59 * *', function () {
 });
 ```
 
+## 跨域共享 Cookie
+
+### 二级域名共享 Cookie
+
+```js
+app.use(express.session({
+  secret: conf.secret,
+  maxAge: new Date(Date.now() + 3600000),
+  cookie: {
+    path: '/',
+    domain: '.yourdomain.com',
+  },
+  store: new MongoStore(conf.sessiondb),
+}));
+```
+
+### 淘宝天猫共享 Cookie
+
+- 淘宝登录后 `.taobao.com` 的接口会带上 Cookie
+- 天猫使用 JSONP 请求一个 `.taobao.com` 的接口，接口返回一段 script，直接把带有 Cookie 的对象设置到 window 下
+
 # 参考地址
 
 - [《Node.js硬实战：115个核心技巧》](https://www.amazon.cn/dp/B01MYX8XG1)
 - [i0natan/nodebestpractices](https://github.com/i0natan/nodebestpractices)
 - [真-Node多线程](https://juejin.im/post/5c63b5676fb9a049ac79a798?utm_source=gold_browser_extension)
+- [CS-Notes](https://github.com/CyC2018/CS-Notes)
