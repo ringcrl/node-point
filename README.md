@@ -202,7 +202,7 @@ console.log(uri);
 const fs = require('fs');
 const uri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgA...';
 const base64Data = uri.split(',')[1];
-const buf = Buffer(base64Data, 'base64');
+const buf = Buffer.from(base64Data, 'base64');
 fs.writeFileSync(`${__dirname}/secondmonkey.png`, buf);
 ```
 
